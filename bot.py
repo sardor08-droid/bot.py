@@ -208,12 +208,15 @@ def auto_backup_database():
         logging.error(f"Backup xatolik: {e}")
 
 
-# 🌐 FLASK WEB SERVER VA CORS INTEGRATSIYASI
+# 🌐 FLASK WEB SERVER VA CORS INTEGRATSIYASI (YANGILANDI)
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-@app.route('/api/user-data', methods=['POST'])
+@app.route('/api/user-data', methods=['POST', 'OPTIONS'])
 def get_mini_app_user_data():
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+        
     try:
         data = request.get_json()
         if not data or 'user_id' not in data:
@@ -244,8 +247,18 @@ def get_mini_app_user_data():
     except Exception as e:
         return jsonify({"success": False, "message": f"Server xatoligi: {str(e)}"}), 500
 
-@app.route('/api/purchase', methods=['POST'])
+# Mini App ba'zan so'raydigan qo'shimcha tasdiqlash manzili
+@app.route('/api/verify-user', methods=['POST', 'OPTIONS'])
+def verify_mini_app_user():
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+    return jsonify({"success": True, "message": "Foydalanuvchi tasdiqlandi"}), 200
+
+@app.route('/api/purchase', methods=['POST', 'OPTIONS'])
 def process_mini_app_purchase():
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+        
     try:
         data = request.get_json()
         u_id = int(data.get('user_id'))
