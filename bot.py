@@ -16,7 +16,7 @@ logging.basicConfig(
 )
 
 # ⚙️ ASOSIY STRUKTURAVIY SOZLAMALAR
-BOT_TOKEN = "8471799836:AAFnQAaMk0GFaL-G6jGk41eaEcdI4HnB4Ck"
+BOT_TOKEN = "8471799836:AAHmSZYDxF84XY_Klx3Y4gUU4Kkzs2oZdxE"
 ADMIN_ID = 7977733681  # Sardorbek - Imperator ID raqami
 
 bot = telebot.TeleBot(BOT_TOKEN)
