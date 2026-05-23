@@ -2,14 +2,14 @@ import sqlite3
 import logging
 import telebot
 import json
-import requests
-from bs4 import BeautifulSoup
+import os
 from datetime import datetime
+from telebot import apihelper
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-# Xatolarni professional darajada konsolda kuzatish (Logging)
+# Xatolarni professional darajada kuzatish (Logging)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -17,7 +17,7 @@ logging.basicConfig(
 
 # ⚙️ ASOSIY STRUKTURAVIY SOZLAMALAR
 BOT_TOKEN = "8471799836:AAFnQAaMk0GFaL-G6jGk41eaEcdI4HnB4Ck"
-ADMIN_ID = 7977733681  # Sardorbek - Sening shaxsiy imperatorlik ID raqaming
+ADMIN_ID = 7977733681  # Sardorbek - Imperator ID raqami
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -28,68 +28,12 @@ CONFIG = {
     "start_photo": "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe"
 }
 
-# 🌐 FLASK WEB SERVER VA CORS INTEGRATSIYASI (GITHUB UCHUN TO'LIQ RUXSAT)
-app = Flask(__name__)
-CORS(app, resources={
-    r"/api/*": {
-        "origins": "*",
-        "methods": ["POST", "GET", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
-    }
-})
-
-@app.route('/')
-def home():
-    return "Bot muvaffaqiyatli ishlamoqda!", 200
-
-@app.route('/api/verify-user', methods=['POST'])
-def verify_telegram_user():
-    try:
-        data = request.get_json()
-        if not data or 'username' not in data:
-            return jsonify({"success": False, "message": "Username kiritilmagan."}), 400
-
-        username_input = data['username'].replace("@", "").strip()
-
-        if len(username_input) < 4:
-            return jsonify({"success": False, "message": "Username xato kiritildi!"})
-
-        # 🌐 Telegram Web sahifasidan foydalanuvchi ma'lumotlarini qidirish (Proksisiz)
-        url = f"https://t.me/{username_input}"
-        response = requests.get(url, timeout=10)
-
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            title_element = soup.find("meta", property="og:title")
-
-            if title_element and title_element.get("content"):
-                display_name = title_element.get("content")
-
-                if "Telegram: Contact" in display_name or display_name.strip() == "":
-                    return jsonify({"success": False, "message": f"@{username_input} bunday foydalanuvchi topilmadi!"})
-
-                return jsonify({
-                    "success": True,
-                    "user": {
-                        "id": 111222333,
-                        "first_name": display_name,
-                        "username": username_input
-                    }
-                })
-            else:
-                return jsonify({"success": False, "message": "Foydalanuvchi topilmadi."})
-        else:
-            return jsonify({"success": False, "message": "Telegram serveriga ulanishda xatolik."})
-
-    except Exception as e:
-        return jsonify({"success": False, "message": "Server xatoligi yuz berdi."}), 500
-
-
-# 🗄️ MUSTAHKAM SQLITE MA'LUMOTLAR OMBORI
+# 🗄️ MUSTAHKAM SQLITE MA'LUMOTLAR OMBORI ARXITEKTURASI
 def init_db():
     conn = sqlite3.connect("store_management.db")
     cursor = conn.cursor()
 
+    # Foydalanuvchilar jadvali (Kengaytirilgan profillar)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -102,6 +46,7 @@ def init_db():
         )
     """)
 
+    # Buyurtmalar jadvali
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             order_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,14 +61,17 @@ def init_db():
         )
     """)
 
+    # Omborxona jadvali
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS inventory (
             product_id TEXT PRIMARY KEY,
             product_name TEXT,
-            price_soem INTEGER
+            price_soem INTEGER,
+            category TEXT DEFAULT 'Boshqa'
         )
     """)
 
+    # Global Tizim Sozlamalari
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS global_settings (
             key TEXT PRIMARY KEY,
@@ -133,29 +81,31 @@ def init_db():
 
     cursor.execute("INSERT OR IGNORE INTO global_settings (key, value) VALUES ('total_kassa', '0')")
 
+    # Boshlang'ich default mahsulotlar (Baza bo'sh bo'lsa avto-to'ladi)
     default_products = [
-        ("stars_1", "1 dona Stars narxi", 380),
-        ("premium_3m", "Telegram Premium (3 Oylik)", 150000),
-        ("premium_6m", "Telegram Premium (6 Oylik)", 280000),
-        ("premium_12m", "Telegram Premium (1 Yillik)", 500000),
-        ("pubg_60uc", "PUBG 60 UC", 15000),
-        ("pubg_325uc", "PUBG 325 UC", 70000),
-        ("stars_50", "50 TG Stars", 20000),
-        ("stars_100", "100 TG Stars", 38000)
+        ("stars_1", "1 dona Stars", 380, "Stars"),
+        ("stars_50", "50 TG Stars", 19000, "Stars"),
+        ("stars_100", "100 TG Stars", 38000, "Stars"),
+        ("premium_3m", "Telegram Premium (3 Oylik)", 150000, "Premium"),
+        ("premium_6m", "Telegram Premium (6 Oylik)", 280000, "Premium"),
+        ("premium_12m", "Telegram Premium (1 Yillik)", 500000, "Premium"),
+        ("pubg_60uc", "PUBG 60 UC", 15000, "PUBG"),
+        ("pubg_325uc", "PUBG 325 UC", 70000, "PUBG")
     ]
-    for p_id, p_name, p_price in default_products:
-        cursor.execute("INSERT OR IGNORE INTO inventory (product_id, product_name, price_soem) VALUES (?, ?, ?)", (p_id, p_name, p_price))
+    for p_id, p_name, p_price, p_cat in default_products:
+        cursor.execute("INSERT OR IGNORE INTO inventory (product_id, product_name, price_soem, category) VALUES (?, ?, ?, ?)", (p_id, p_name, p_price, p_cat))
 
     conn.commit()
     conn.close()
 
-
-# 🛠️ BAZA OPERATORLARI
+# 🗄️ BAZA AMALIYOTLARI OPERATORLARI
 def db_add_user(user_id, username, name):
     conn = sqlite3.connect("store_management.db")
     cursor = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute("INSERT OR IGNORE INTO users (user_id, username, name, joined_at) VALUES (?, ?, ?, ?)", (user_id, username, name, now))
+    # Agar foydalanuvchi oldindan bo'lsa, username yangilanishi mumkin
+    cursor.execute("UPDATE users SET username = ?, name = ? WHERE user_id = ?", (username, name, user_id))
     conn.commit()
     conn.close()
 
@@ -164,15 +114,22 @@ def db_get_user(user_id):
     cursor = conn.cursor()
     cursor.execute("SELECT username, name, balance, banned, spent_money, joined_at FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    cursor.execute("SELECT COUNT(*) FROM orders WHERE user_id = ?", (user_id,))
-    order_count = cursor.fetchone()[0]
     conn.close()
     if row:
         return {
             "username": row[0], "name": row[1], "balance": row[2],
-            "banned": bool(row[3]), "spent_money": row[4], "joined_at": row[5], "orders_count": order_count
+            "banned": bool(row[3]), "spent_money": row[4], "joined_at": row[5]
         }
     return None
+
+def db_get_user_by_username(username):
+    conn = sqlite3.connect("store_management.db")
+    cursor = conn.cursor()
+    clean_username = username.replace("@", "").strip()
+    cursor.execute("SELECT user_id FROM users WHERE username LIKE ? OR username LIKE ?", (f"%{clean_username}%", f"@{clean_username}"))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
 
 def db_get_user_orders(user_id):
     conn = sqlite3.connect("store_management.db")
@@ -185,48 +142,51 @@ def db_get_user_orders(user_id):
 def db_get_inventory():
     conn = sqlite3.connect("store_management.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT product_id, product_name, price_soem FROM inventory")
+    cursor.execute("SELECT product_id, product_name, price_soem, category FROM inventory")
     rows = cursor.fetchall()
     conn.close()
     products = {}
     for r in rows:
-        products[r[0]] = {"name": r[1], "price": r[2]}
+        products[r[0]] = {"name": r[1], "price": r[2], "category": r[3]}
     return products
 
-def db_execute_auto_purchase(user_id, product_id, product_name, price_sum, target):
+def db_execute_purchase(user_id, product_id, product_name, price_sum, target):
     conn = sqlite3.connect("store_management.db")
     cursor = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    cursor.execute("""
-        INSERT INTO orders (user_id, product_id, product_name, price_sum, target_username, status, created_at)
-        VALUES (?, ?, ?, ?, ?, 'Bajarildi', ?)
-    """, (user_id, product_id, product_name, price_sum, target, now))
+    # Balansni tekshirish
+    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+    balance = cursor.fetchone()[0]
+    if balance < price_sum:
+        conn.close()
+        return False, "Balans yetarli emas"
 
-    cursor.execute("UPDATE users SET spent_money = spent_money + ? WHERE user_id = ?", (price_sum, user_id))
+    # Tranzaksiyani hisobdan chiqarish
+    cursor.execute("UPDATE users SET balance = balance - ?, spent_money = spent_money + ? WHERE user_id = ?", (price_sum, price_sum, user_id))
+    cursor.execute("INSERT INTO orders (user_id, product_id, product_name, price_sum, target_username, status, created_at) VALUES (?, ?, ?, ?, ?, 'Bajarildi', ?)", 
+                   (user_id, product_id, product_name, price_sum, target, now))
     cursor.execute("UPDATE global_settings SET value = CAST(value AS INTEGER) + ? WHERE key = 'total_kassa'", (price_sum,))
-
+    
     cursor.execute("SELECT last_insert_rowid()")
     order_id = cursor.fetchone()[0]
     conn.commit()
     conn.close()
-    return order_id
+    return True, order_id
 
-def db_get_all_users():
+def db_get_stats():
     conn = sqlite3.connect("store_management.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM users")
-    rows = cursor.fetchall()
-    conn.close()
-    return [r[0] for r in rows]
-
-def db_get_kassa():
-    conn = sqlite3.connect("store_management.db")
-    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM users WHERE banned = 1")
+    banned_users = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM inventory")
+    total_products = cursor.fetchone()[0]
     cursor.execute("SELECT value FROM global_settings WHERE key = 'total_kassa'")
-    val = int(cursor.fetchone()[0])
+    kassa = int(cursor.fetchone()[0])
     conn.close()
-    return val
+    return total_users, banned_users, total_products, kassa
 
 def db_update_user_balance(user_id, amount):
     conn = sqlite3.connect("store_management.db")
@@ -242,22 +202,121 @@ def db_set_ban(user_id, status):
     conn.commit()
     conn.close()
 
-def db_add_product_to_inv(p_id, p_name, p_price):
-    conn = sqlite3.connect("store_management.db")
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO inventory (product_id, product_name, price_soem) VALUES (?, ?, ?)", (p_id, p_name, p_price))
-    conn.commit()
-    conn.close()
+# 🔄 RENDER UCHUN AVTO-ZAXIRA TIZIMI (DATABASE AUTO-BACKUP)
+def auto_backup_database():
+    try:
+        if os.path.exists("store_management.db"):
+            with open("store_management.db", "rb") as f:
+                bot.send_document(
+                    chat_id=ADMIN_ID, 
+                    document=f, 
+                    caption=f"🗄 **AVTO-ZAXIRA (BACKUP)**\n⏰ Vaqt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n⚠️ Render o'chib ketsa, ushbu faylni qayta yuklash mumkin."
+                )
+    except Exception as e:
+        logging.error(f"Backup xatolik: {e}")
 
-def db_del_product_from_inv(p_id):
-    conn = sqlite3.connect("store_management.db")
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM inventory WHERE product_id = ?", (p_id,))
-    conn.commit()
-    conn.close()
+
+# 🌐 FLASK WEB SERVER VA CORS INTEGRATSIYASI (MINI APP BILAN TO'LIQ INTEGRATSIYA)
+app = Flask(__name__)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+@app.route('/api/user-data', methods=['POST'])
+def get_mini_app_user_data():
+    """ Foydalanuvchi Mini App'ga kirganda uning barcha ma'lumotlarini bazadan olib uzatadi """
+    try:
+        data = request.get_json()
+        if not data or 'user_id' not in data:
+            return jsonify({"success": False, "message": "Identifikatsiya xatosi."}), 400
+        
+        u_id = int(data['user_id'])
+        user_info = db_get_user(u_id)
+        
+        if not user_info:
+            return jsonify({"success": False, "message": "Foydalanuvchi bot ro'yxatidan o'tmagan."}), 404
+            
+        if user_info['banned']:
+            return jsonify({"success": False, "message": "Siz botdan bloklangansiz!"}), 403
+
+        all_products = db_get_inventory()
+        
+        return jsonify({
+            "success": True,
+            "user": {
+                "id": u_id,
+                "name": user_info["name"],
+                "username": user_info["username"],
+                "balance": user_info["balance"],
+                "spent": user_info["spent_money"]
+            },
+            "products": all_products
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Server xatoligi: {str(e)}"}), 500
+
+@app.route('/api/purchase', methods=['POST'])
+def process_mini_app_purchase():
+    """ Mini App ichida 'Sotib olish' bosilganda ishlaydigan mukammal algoritm """
+    try:
+        data = request.get_json()
+        u_id = int(data.get('user_id'))
+        p_id = data.get('product_id')
+        target = data.get('target', "O'ziga")
+
+        user_info = db_get_user(u_id)
+        if not user_info or user_info['banned']:
+            return jsonify({"success": False, "message": "Tranzaksiya taqiqlangan!"}), 403
+
+        products = db_get_inventory()
+        if p_id not in products:
+            return jsonify({"success": False, "message": "Mahsulot omborda topilmadi!"}), 404
+
+        product_item = products[p_id]
+        price = product_item["price"]
+        p_name = product_item["name"]
+
+        success, result = db_execute_purchase(u_id, p_id, p_name, price, target)
+
+        if success:
+            order_id = result
+            # 📩 Foydalanuvchiga chek yuborish
+            user_msg = (
+                f"🥳 **Xarid muvaffaqiyatli yakunlandi!**\n=========================\n"
+                f"🧾 **Chek №:** `{order_id}`\n📦 **Mahsulot:** {p_name}\n"
+                f"💰 **Yechilgan mablag':** `{price:,} so'm`\n🎯 **Qabul qiluvchi:** `{target}`\n"
+                f"⏰ **Vaqt:** {datetime.now().strftime('%H:%M:%S')}\n\n"
+                f"⚡️ Mahsulot tez orada yetkaziladi!"
+            )
+            try:
+                bot.send_message(u_id, user_msg, parse_mode="Markdown")
+            except Exception: pass
+
+            # 👑 Imperatorga (Adminga) daxshatli bildirishnoma yuborish
+            admin_msg = (
+                f"🚨 **YANGI BUYURTMA №{order_id}!**\n=========================\n"
+                f"👤 **Mijoz:** {user_info['name']} ({u_id})\n"
+                f"📦 **Tovar:** `{p_name}`\n💰 **Narxi:** `{price:,} so'm`\n"
+                f"🎯 **Yuborish kerak:** `{target}`\n"
+                f"⏰ **Vaqt:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            kb = InlineKeyboardMarkup()
+            kb.add(
+                InlineKeyboardButton("👤 Mijozni tekshirish", callback_data=f"crm_inspect_{u_id}"),
+                InlineKeyboardButton("✅ Bajarildi deb belgilash", callback_data=f"crm_done_{order_id}")
+            )
+            bot.send_message(ADMIN_ID, admin_msg, parse_mode="Markdown", reply_markup=kb)
+
+            # Avtomatik zaxira nusxasini adminga tashlash
+            auto_backup_database()
+
+            return jsonify({"success": True, "order_id": order_id, "new_balance": user_info["balance"] - price})
+        else:
+            return jsonify({"success": False, "message": result}), 400
+
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
 
 
-# 🟢 START BUYRUG'I
+# 🟢 FOYDALANUVCHI QISMI (FAQAT MINI APPGA KIRISH TUGMASI)
 @bot.message_handler(commands=['start'])
 def start_command(message):
     user_id = message.chat.id
@@ -271,11 +330,9 @@ def start_command(message):
         bot.send_message(user_id, "❌ Siz tizimdan bloklangansiz!")
         return
 
-    current_products = db_get_inventory()
-    current_price = current_products["stars_1"]["price"] if "stars_1" in current_products else 380
-
+    # Dinamik Mini App URL manzili (Keshni oldini olish uchun timestamp bilan)
     timestamp = int(datetime.now().timestamp())
-    dynamic_web_app_url = f"{CONFIG['web_app_url']}?price={current_price}&t={timestamp}"
+    dynamic_web_app_url = f"{CONFIG['web_app_url']}?user_id={user_id}&t={timestamp}"
 
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
@@ -283,192 +340,274 @@ def start_command(message):
         InlineKeyboardButton(text="🔈 Yangiliklar kanali", url=CONFIG["channel_url"])
     )
 
-    welcome_text = f"👋 Salom {first_name}!\n\n⭐️ Nova Store botiga xush kelibsiz.\nXarid qilish uchun pastdagi tugmani bosing 👇"
+    welcome_text = (
+        f"👋 Salom **{first_name}**!\n\n"
+        f"⭐️ **Nova Store** rasmiy botiga xush kelibsiz.\n"
+        f"Do'konimiz butunlay yangilandi va to'liq **Mini App** tizimiga o'tkazildi.\n\n"
+        f"👇 Xarid qilishni boshlash uchun pastdagi tugmani bosing!"
+    )
     try:
-        bot.send_photo(chat_id=user_id, photo=CONFIG["start_photo"], caption=welcome_text, reply_markup=kb)
+        bot.send_photo(chat_id=user_id, photo=CONFIG["start_photo"], caption=welcome_text, parse_mode="Markdown", reply_markup=kb)
     except Exception:
-        bot.send_message(user_id, welcome_text, reply_markup=kb)
+        bot.send_message(user_id, welcome_text, parse_mode="Markdown", reply_markup=kb)
 
 
-# 👑 ADMIN PANEL
+# 👑 DAXSHATLI IMPERATOR PANEL (ADMIN PANEL)
 @bot.message_handler(commands=['admin'])
 def super_admin_panel(message):
     if message.chat.id != ADMIN_ID: return
-    total_users = len(db_get_all_users())
-    kassa = db_get_kassa()
-    inv_count = len(db_get_inventory())
+    
+    total_users, banned_users, total_products, kassa = db_get_stats()
 
     admin_text = (
-        f"👑 **ADMIN PANEL**\n==================================\n\n"
-        f"👥 Mijozlar: `{total_users} ta`\n💰 Kassa: `{kassa:,} so'm`\n📦 Tovar turlari: `{inv_count} ta`"
+        f"👑 **IMPERATOR BOSHQARUV MARKAZI**\n"
+        f"==================================\n\n"
+        f"📊 **Umumiy statistika:**\n"
+        f"👥 Jami mijozlar: `{total_users} ta`\n"
+        f"🚫 Bloklanganlar: `{banned_users} ta`\n"
+        f"📦 Tovar turlari: `{total_products} ta`\n"
+        f"💰 Umumiy Kassa: `{kassa:,} so'm`\n\n"
+        f"⚙️ Boshqarish uchun kerakli bo'limni tanlang:"
     )
+    
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton("👤 CRM (Mijoz)", callback_data="pnl_user_inspect"),
-        InlineKeyboardButton("💰 Balans", callback_data="pnl_balance_ctrl"),
-        InlineKeyboardButton("📦 Tovar Ombori", callback_data="pnl_inventory_ctrl"),
-        InlineKeyboardButton("📢 Reklama", callback_data="pnl_broadcast"),
-        InlineKeyboardButton("🚫 Ban Tizimi", callback_data="pnl_ban_manager")
+        InlineKeyboardButton("👤 CRM (Mijoz qidirish)", callback_data="pnl_user_inspect"),
+        InlineKeyboardButton("💰 Moliya (Balans)", callback_data="pnl_balance_ctrl"),
+        InlineKeyboardButton("📦 Omborxona (Inventory)", callback_data="pnl_inventory_ctrl"),
+        InlineKeyboardButton("📢 Smart Reklama", callback_data="pnl_broadcast"),
+        InlineKeyboardButton("🗄 Baza Zaxirasi (Backup)", callback_data="pnl_backup_now")
     )
     bot.send_message(ADMIN_ID, admin_text, parse_mode="Markdown", reply_markup=kb)
+
+@bot.message_handler(commands=['backup'])
+def manual_backup(message):
+    if message.chat.id == ADMIN_ID:
+        auto_backup_database()
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("pnl_"))
 def admin_sub_navigation(call):
     if call.message.chat.id != ADMIN_ID: return
     bot.answer_callback_query(call.id)
     panel = call.data
+    
     if panel == "pnl_user_inspect":
-        msg = bot.send_message(ADMIN_ID, "🔍 Mijozning **Telegram ID** raqamini kiriting:")
+        msg = bot.send_message(ADMIN_ID, "🔍 Izlanayotgan mijozning **Telegram ID** yoki **@username**'ini kiriting:")
         bot.register_next_step_handler(msg, process_crm_user_inspect)
+        
     elif panel == "pnl_balance_ctrl":
-        msg = bot.send_message(ADMIN_ID, "💰 Format: `ID_RAQAMI | SUMMA` (Masalan: `7977733681 | 50000`)")
+        msg = bot.send_message(ADMIN_ID, "💰 **Balansni o'zgartirish formatini kiriting:**\n`ID_RAQAMI | SUMMA`\n\n*Misol (Pul qo'shish):* `7977733681 | 50000`\n*Misol (Pul ayirish):* `7977733681 | -20000`")
         bot.register_next_step_handler(msg, process_admin_balance_change)
+        
     elif panel == "pnl_inventory_ctrl":
         kb = InlineKeyboardMarkup(row_width=2)
         kb.add(
             InlineKeyboardButton("➕ Tovar Qo'shish", callback_data="inv_add"),
             InlineKeyboardButton("🗑️ Tovar O'chirish", callback_data="inv_del"),
-            InlineKeyboardButton("📋 Ro'yxat", callback_data="inv_view_list")
+            InlineKeyboardButton("📋 Tovar Ro'yxati", callback_data="inv_view_list")
         )
-        bot.send_message(ADMIN_ID, "📦 **Ombor boshqaruvi:**", reply_markup=kb)
+        bot.send_message(ADMIN_ID, "📦 **Omborxonani boshqarish:**", reply_markup=kb)
+        
     elif panel == "pnl_broadcast":
-        msg = bot.send_message(ADMIN_ID, "📢 Global postni yuboring:")
+        msg = bot.send_message(ADMIN_ID, "📢 **Barcha foydalanuvchilarga yuboriladigan postni yuboring:**\n(Bu yerda rasm, video, matn yoki inline tugmali tayyor xabar bo'lishi mumkin)")
         bot.register_next_step_handler(msg, process_admin_broadcast)
-    elif panel == "pnl_ban_manager":
-        msg = bot.send_message(ADMIN_ID, "🚫 Bloklash uchun Telegram ID raqamini bering:")
-        bot.register_next_step_handler(msg, process_admin_ban_click)
+        
+    elif panel == "pnl_backup_now":
+        auto_backup_database()
+        bot.send_message(ADMIN_ID, "✅ Ma'lumotlar bazasi zaxiralandi.")
 
+# 👤 CRM INTERFEJSI - MIJOZNING TO'LIQ DETALLARI
 def process_crm_user_inspect(message):
     try:
-        target_id = int(message.text.strip())
-        user_info = db_get_user(target_id)
-        if not user_info:
-            bot.send_message(ADMIN_ID, "❌ Topilmadi!")
+        input_data = message.text.strip()
+        if input_data.isdigit():
+            target_id = int(input_data)
+        else:
+            target_id = db_get_user_by_username(input_data)
+            
+        if not target_id:
+            bot.send_message(ADMIN_ID, "❌ Bunday foydalanuvchi ma'lumotlar bazasidan topilmadi!")
             return
+            
+        user_info = db_get_user(target_id)
         orders = db_get_user_orders(target_id)
+        
         history_text = ""
         if orders:
-            for index, order in enumerate(orders, 1):
-                history_text += f"{index}. 📦 {order[1]} | `{order[2]:,} so'm` | {order[3]}\n"
+            for index, order in enumerate(orders[:15], 1):  # Oxirgi 15 ta xarid
+                history_text += f"{index}. 📦 {order[1]} | `{order[2]:,}` so'm | {order[3]} | {order[5]}\n"
         else:
-            history_text = "🤷‍♂️ Xaridlar yo'q."
+            history_text = "🤷‍♂️ Xaridlar tarixi mavjud emas."
 
-        inspect_response = f"🆔 ID: `{target_id}`\n🏷 Ism: {user_info['name']}\n💰 Balans: `{user_info['balance']:,} so'm`\n\n🛒 Xarid tarixi:\n{history_text}"
+        inspect_response = (
+            f"👤 **MIJOZ PROFILLI (CRM 360°):**\n"
+            f"==================================\n"
+            f"🆔 **Telegram ID:** `{target_id}`\n"
+            f"🏷 **Ism:** {user_info['name']}\n"
+            f"🌐 **Username:** {user_info['username']}\n"
+            f"📅 **Qo'shilgan vaqti:** `{user_info['joined_at']}`\n"
+            f"🚫 **Holati:** {'🔴 Bloklangan' if user_info['banned'] else '🟢 Faol'}\n"
+            f"==================================\n"
+            f"💰 **Joriy Balans:** `{user_info['balance']:,} so'm`\n"
+            f"💸 **Jami xarid qilgan summasi:** `{user_info['spent_money']:,} so'm`\n\n"
+            f"🛒 **Oxirgi xaridlari:**\n{history_text}"
+        )
+        
         kb = InlineKeyboardMarkup()
         act = "unban" if user_info['banned'] else "ban"
         txt = "🟢 Blokdan ochish" if user_info['banned'] else "🔴 Bloklash"
-        kb.add(InlineKeyboardButton(txt, callback_data=f"crmaction_{act}_{target_id}"))
+        kb.add(
+            InlineKeyboardButton(txt, callback_data=f"crmaction_{act}_{target_id}"),
+            InlineKeyboardButton("💰 Balansni boshqarish", callback_data=f"crmaction_bal_{target_id}")
+        )
         bot.send_message(ADMIN_ID, inspect_response, parse_mode="Markdown", reply_markup=kb)
     except Exception as e:
-        bot.send_message(ADMIN_ID, f"❌ Xato: {e}")
+        bot.send_message(ADMIN_ID, f"❌ Qidiruvda xatolik: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("crm_"))
+def handle_quick_crm_actions(call):
+    if call.message.chat.id != ADMIN_ID: return
+    bot.answer_callback_query(call.id)
+    parts = call.data.split("_")
+    action = parts[1]
+    
+    if action == "inspect":
+        uid = int(parts[2])
+        # Sun'iy xabar yaratib yuboramiz qidiruv oson bo'lishi uchun
+        msg = telebot.types.Message(message_id=call.message.message_id, from_user=call.from_user, date=call.message.date, chat=call.message.chat, content_type='text', options=[], json_string="")
+        msg.text = str(uid)
+        process_crm_user_inspect(msg)
+    elif action == "done":
+        order_id = parts[2]
+        bot.edit_message_caption(chat_id=ADMIN_ID, message_id=call.message.message_id, caption=call.message.caption + "\n\n✅ **BU BUYURTMA SARDORBEK TOMONIDAN BAJARILDI!**")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("crmaction_"))
-def handle_crm_ban_unban(call):
+def handle_crm_deep_actions(call):
     if call.message.chat.id != ADMIN_ID: return
     bot.answer_callback_query(call.id)
     _, action, uid = call.data.split("_")
-    db_set_ban(int(uid), action == "ban")
-    bot.send_message(ADMIN_ID, f"✅ Bajarildi!")
+    uid = int(uid)
+    
+    if action == "ban":
+        db_set_ban(uid, True)
+        bot.send_message(ADMIN_ID, f"✅ ID: {uid} muvaffaqiyatli bloklandi!")
+        try: bot.send_message(uid, "❌ Siz bot ma'muriyati tomonidan tizimdan bloklandingiz!")
+        except Exception: pass
+    elif action == "unban":
+        db_set_ban(uid, False)
+        bot.send_message(ADMIN_ID, f"✅ ID: {uid} blokdan ochildi!")
+        try: bot.send_message(uid, "🟢 Sizning profilingiz blokdan ochildi. Do'kondan foydalanishingiz mumkin!")
+        except Exception: pass
+    elif action == "bal":
+        msg = bot.send_message(ADMIN_ID, f"💰 ID: `{uid}` uchun o'zgaruvchi summani yozing (Masalan: `25000` yoki `-15000`):")
+        bot.register_next_step_handler(msg, lambda m: process_direct_balance(m, uid))
 
+def process_direct_balance(message, uid):
+    try:
+        amount = int(message.text.strip())
+        db_update_user_balance(uid, amount)
+        bot.send_message(ADMIN_ID, f"✅ ID: {uid} balansiga {amount:,} so'm kiritildi!")
+        try: bot.send_message(uid, f"💰 Botingiz balansi ma'muriyat tomonidan yangilandi: `{amount:,} so'm`")
+        except Exception: pass
+    except Exception as e:
+        bot.send_message(ADMIN_ID, f"❌ Xato kiritish: {e}")
+
+# 💰 MOLIYA BOSHQARUVI (BALANS)
 def process_admin_balance_change(message):
     try:
         parts = message.text.split("|")
         t_id = int(parts[0].strip())
         amount = int(parts[1].strip())
         db_update_user_balance(t_id, amount)
-        bot.send_message(ADMIN_ID, f"✅ ID: {t_id} balansiga {amount:,} so'm muvaffaqiyatli qo'shildi!")
-        bot.send_message(t_id, f"💰 Botingiz balansi admin tomonidan `{amount:,} so'm`ga yangilandi!")
+        bot.send_message(ADMIN_ID, f"✅ Muvaffaqiyatli! ID: {t_id} balansiga {amount:,} so'm qo'shildi/ayrildi!")
+        try: bot.send_message(t_id, f"💰 Botingiz balansi admin tomonidan o'zgartirildi: `{amount:,} so'm`")
+        except Exception: pass
     except Exception as e:
-        bot.send_message(ADMIN_ID, f"❌ Xato format: {e}")
+        bot.send_message(ADMIN_ID, f"❌ Xato format format: {e}")
 
+# 📦 OMBORXONA BOSHQARUVI (INVENTORY ACTIONS)
 @bot.callback_query_handler(func=lambda call: call.data.startswith("inv_"))
 def inventory_actions_handler(call):
     if call.message.chat.id != ADMIN_ID: return
     bot.answer_callback_query(call.id)
     action = call.data
+    
     if action == "inv_view_list":
         current_inv = db_get_inventory()
-        text = "📋 **Omborda bor tovarlar:\n**"
+        text = "📋 **Omborxonada mavjud tovarlar ro'yxati:**\n==================================\n\n"
         for key, info in current_inv.items():
-            text += f"🔑 ID: `{key}` | *{info['name']}* | `{info['price']:,} so'm`\n"
+            text += f"🔑 **ID:** `{key}`\n📦 **Nomi:** *{info['name']}*\n💰 **Narxi:** `{info['price']:,} so'm`\n🗂 **Toifa:** `{info['category']}`\n----------------------------------\n"
         bot.send_message(ADMIN_ID, text, parse_mode="Markdown")
+        
     elif action == "inv_add":
-        msg = bot.send_message(ADMIN_ID, "Format: `id | Nomi | Narxi` \n(Misol: `stars_1 | 1 Stars | 400`)")
+        msg = bot.send_message(ADMIN_ID, "Formatni kiriting: `id | Nomi | Narxi | Toifa` \n\n*Misol:* `stars_500 | 500 dona Stars | 190000 | Stars`")
         bot.register_next_step_handler(msg, process_inventory_add_item)
+        
     elif action == "inv_del":
-        msg = bot.send_message(ADMIN_ID, "🗑️ O'chirish uchun tovar ID sini yozing:")
+        msg = bot.send_message(ADMIN_ID, "🗑️ O'chirish demoqchi bo'lgan tovarning **ID** kodini yozing (Masalan: `stars_1`):")
         bot.register_next_step_handler(msg, process_inventory_del_item)
 
 def process_inventory_add_item(message):
     try:
         parts = message.text.split("|")
-        db_add_product_to_inv(parts[0].strip(), parts[1].strip(), int(parts[2].strip()))
-        bot.send_message(ADMIN_ID, "✅ Tovar omborga qo'shildi/yangilandi!")
+        p_id = parts[0].strip()
+        p_name = parts[1].strip()
+        p_price = int(parts[2].strip())
+        p_cat = parts[3].strip() if len(parts) > 3 else "Boshqa"
+        
+        conn = sqlite3.connect("store_management.db")
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO inventory (product_id, product_name, price_soem, category) VALUES (?, ?, ?, ?)", (p_id, p_name, p_price, p_cat))
+        conn.commit()
+        conn.close()
+        
+        bot.send_message(ADMIN_ID, f"✅ Mahsulot omborga muvaffaqiyatli qo'shildi va Mini App'da yangilandi!")
     except Exception as e:
-        bot.send_message(ADMIN_ID, f"❌ Xato: {e}")
+        bot.send_message(ADMIN_ID, f"❌ Xato! Formatni noto'g'ri kiritgansiz: {e}")
 
 def process_inventory_del_item(message):
-    db_del_product_from_inv(message.text.strip())
-    bot.send_message(ADMIN_ID, "✅ Tovar o'chirildi!")
+    try:
+        p_id = message.text.strip()
+        conn = sqlite3.connect("store_management.db")
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM inventory WHERE product_id = ?", (p_id,))
+        conn.commit()
+        conn.close()
+        bot.send_message(ADMIN_ID, "✅ Tovar omborxonadan butunlay o'chirildi!")
+    except Exception as e:
+        bot.send_message(ADMIN_ID, f"❌ O'chirishda xatolik: {e}")
 
+# 📢 REKLAMA NUSXALOVCHI (SMART BROADCAST)
 def process_admin_broadcast(message):
-    all_users = db_get_all_users()
+    conn = sqlite3.connect("store_management.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    all_users = [r[0] for r in cursor.fetchall()]
+    conn.close()
+    
     count = 0
+    bot.send_message(ADMIN_ID, "⏳ Reklama tarqatilmoqda, kuting...")
+    
     for u_id in all_users:
         if u_id == ADMIN_ID: continue
         try:
             bot.copy_message(chat_id=u_id, from_chat_id=ADMIN_ID, message_id=message.message_id)
             count += 1
-        except Exception: continue
-    bot.send_message(ADMIN_ID, f"✅ Reklama muvaffaqiyatli {count} kishiga yuborildi.")
-
-def process_admin_ban_click(message):
-    try:
-        uid = int(message.text.strip())
-        user_info = db_get_user(uid)
-        if user_info:
-            db_set_ban(uid, not user_info['banned'])
-            bot.send_message(ADMIN_ID, f"✅ ID: {uid} foydalanuvchining blok holati o'zgardi!")
-    except Exception as e:
-        bot.send_message(ADMIN_ID, f"❌ Xato: {e}")
+        except Exception:
+            continue
+            
+    bot.send_message(ADMIN_ID, f"✅ Reklama muvaffaqiyatli {count} ta faol mijozga yetkazildi!")
 
 
-# 📱 MINI APP SOTUV APARATI INTEGRATSIYASI
-@bot.message_handler(content_types=['web_app_data'])
-def handle_mini_app_transactions(message):
-    try:
-        incoming_data = message.web_app_data.data
-        target_user = f"@{message.from_user.username}" if message.from_user.username else "Mavjud emas"
-        current_products = db_get_inventory()
-
-        if incoming_data.startswith("{") and incoming_data.endswith("}"):
-            parsed_json = json.loads(incoming_data)
-            if parsed_json.get("action") == "buy_custom_stars":
-                stars_count = int(parsed_json.get("amount", 0))
-                custom_target = parsed_json.get("target") or target_user
-                ONE_STARS_PRICE = current_products["stars_1"]["price"] if "stars_1" in current_products else 380
-                total_price_soem = stars_count * ONE_STARS_PRICE
-
-                order_id = db_execute_auto_purchase(message.chat.id, f"custom_stars_{stars_count}", f"{stars_count} Stars", total_price_soem, custom_target)
-                bot.send_message(message.chat.id, f"🥳 **Xarid cheki №{order_id}**\n📦 Mahsulot: {stars_count} Stars\n💸 Jami: `{total_price_soem:,} so'm` \n🎯 Kimga: {custom_target}", parse_mode="Markdown")
-                bot.send_message(ADMIN_ID, f"🚨 **YANGI BUYURTMA №{order_id}!**\n📦 Tovar: {stars_count} Stars\n🎯 Kimga tashlash kerak: {custom_target}\n💰 Narxi: {total_price_soem:,} so'm\n\n⚠️ Sardorbek, profilingizdan ushbu odamga tezda Stars gift qilib yuboring!")
-                return
-
-        product_key = incoming_data.strip()
-        if product_key in current_products:
-            item = current_products[product_key]
-            order_id = db_execute_auto_purchase(message.chat.id, product_key, item["name"], item["price"], target_user)
-            bot.send_message(message.chat.id, f"🥳 **Xarid cheki №{order_id}**\n📦 Mahsulot: {item['name']}\n💰 To'lov: `{item['price']:,} so'm`", parse_mode="Markdown")
-            bot.send_message(ADMIN_ID, f"🚨 **YANGI BUYURTMA №{order_id}!**\n📦 Tovar: {item['name']}\n🎯 Kimga tashlash kerak: {target_user}\n💰 Narxi: {item['price']:,} so'm")
-    except Exception:
-        pass
-
+# Boshlang'ich Ma'lumotlar bazasini ishga tushirish
 init_db()
 
-# 🔄 RENDER SERVERI UCHUN ASOSIY ISHGA TUSHIRISH TIZIMI
+# Flask va Botni birga ishga tushirish (Render talabi bo'yicha port)
 if __name__ == '__main__':
-    # Botni parallel ravishda ham Webhook, ham Pollingda chalkashmasligi uchun oddiy usulda yoqamiz
     import threading
-    threading.Thread(target=bot.infinity_polling, daemon=True).start()
-    app.run(host='0.0.0.0', port=10000)
-
+    port = int(os.environ.get("PORT", 5000))
+    # Flaskni alohida thread ichida ishga tushiramiz
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)).start()
+    # Bot pollingni ishga tushiramiz
+    logging.info("Imperator markazi mukammal ishlamoqda...")
+    bot.infinity_polling(skip_pending=True)
