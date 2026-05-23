@@ -28,12 +28,11 @@ CONFIG = {
     "start_photo": "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe"
 }
 
-# 🗄️ MUSTAHKAM SQLITE MA'LUMOTLAR OMBORI ARXITEKTURASI
+# 🗄️ MA'LUMOTLAR OMBORI
 def init_db():
     conn = sqlite3.connect("store_management.db")
     cursor = conn.cursor()
 
-    # Foydalanuvchilar jadvali (Kengaytirilgan profillar)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -46,7 +45,6 @@ def init_db():
         )
     """)
 
-    # Buyurtmalar jadvali
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             order_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,7 +59,6 @@ def init_db():
         )
     """)
 
-    # Omborxona jadvali
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS inventory (
             product_id TEXT PRIMARY KEY,
@@ -71,7 +68,6 @@ def init_db():
         )
     """)
 
-    # Global Tizim Sozlamalari
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS global_settings (
             key TEXT PRIMARY KEY,
@@ -81,7 +77,6 @@ def init_db():
 
     cursor.execute("INSERT OR IGNORE INTO global_settings (key, value) VALUES ('total_kassa', '0')")
 
-    # Boshlang'ich default mahsulotlar (Baza bo'sh bo'lsa avto-to'ladi)
     default_products = [
         ("stars_1", "1 dona Stars", 380, "Stars"),
         ("stars_50", "50 TG Stars", 19000, "Stars"),
@@ -104,7 +99,6 @@ def db_add_user(user_id, username, name):
     cursor = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute("INSERT OR IGNORE INTO users (user_id, username, name, joined_at) VALUES (?, ?, ?, ?)", (user_id, username, name, now))
-    # Agar foydalanuvchi oldindan bo'lsa, username yangilanishi mumkin
     cursor.execute("UPDATE users SET username = ?, name = ? WHERE user_id = ?", (username, name, user_id))
     conn.commit()
     conn.close()
@@ -155,14 +149,12 @@ def db_execute_purchase(user_id, product_id, product_name, price_sum, target):
     cursor = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Balansni tekshirish
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     balance = cursor.fetchone()[0]
     if balance < price_sum:
         conn.close()
         return False, "Balans yetarli emas"
 
-    # Tranzaksiyani hisobdan chiqarish
     cursor.execute("UPDATE users SET balance = balance - ?, spent_money = spent_money + ? WHERE user_id = ?", (price_sum, price_sum, user_id))
     cursor.execute("INSERT INTO orders (user_id, product_id, product_name, price_sum, target_username, status, created_at) VALUES (?, ?, ?, ?, ?, 'Bajarildi', ?)", 
                    (user_id, product_id, product_name, price_sum, target, now))
@@ -202,7 +194,7 @@ def db_set_ban(user_id, status):
     conn.commit()
     conn.close()
 
-# 🔄 RENDER UCHUN AVTO-ZAXIRA TIZIMI (DATABASE AUTO-BACKUP)
+# 🔄 DATABASE AUTO-BACKUP
 def auto_backup_database():
     try:
         if os.path.exists("store_management.db"):
@@ -216,13 +208,12 @@ def auto_backup_database():
         logging.error(f"Backup xatolik: {e}")
 
 
-# 🌐 FLASK WEB SERVER VA CORS INTEGRATSIYASI (MINI APP BILAN TO'LIQ INTEGRATSIYA)
+# 🌐 FLASK WEB SERVER VA CORS INTEGRATSIYASI
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 @app.route('/api/user-data', methods=['POST'])
 def get_mini_app_user_data():
-    """ Foydalanuvchi Mini App'ga kirganda uning barcha ma'lumotlarini bazadan olib uzatadi """
     try:
         data = request.get_json()
         if not data or 'user_id' not in data:
@@ -255,7 +246,6 @@ def get_mini_app_user_data():
 
 @app.route('/api/purchase', methods=['POST'])
 def process_mini_app_purchase():
-    """ Mini App ichida 'Sotib olish' bosilganda ishlaydigan mukammal algoritm """
     try:
         data = request.get_json()
         u_id = int(data.get('user_id'))
@@ -278,7 +268,6 @@ def process_mini_app_purchase():
 
         if success:
             order_id = result
-            # 📩 Foydalanuvchiga chek yuborish
             user_msg = (
                 f"🥳 **Xarid muvaffaqiyatli yakunlandi!**\n=========================\n"
                 f"🧾 **Chek №:** `{order_id}`\n📦 **Mahsulot:** {p_name}\n"
@@ -290,7 +279,6 @@ def process_mini_app_purchase():
                 bot.send_message(u_id, user_msg, parse_mode="Markdown")
             except Exception: pass
 
-            # 👑 Imperatorga (Adminga) daxshatli bildirishnoma yuborish
             admin_msg = (
                 f"🚨 **YANGI BUYURTMA №{order_id}!**\n=========================\n"
                 f"👤 **Mijoz:** {user_info['name']} ({u_id})\n"
@@ -305,9 +293,7 @@ def process_mini_app_purchase():
             )
             bot.send_message(ADMIN_ID, admin_msg, parse_mode="Markdown", reply_markup=kb)
 
-            # Avtomatik zaxira nusxasini adminga tashlash
             auto_backup_database()
-
             return jsonify({"success": True, "order_id": order_id, "new_balance": user_info["balance"] - price})
         else:
             return jsonify({"success": False, "message": result}), 400
@@ -316,7 +302,7 @@ def process_mini_app_purchase():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
-# 🟢 FOYDALANUVCHI QISMI (FAQAT MINI APPGA KIRISH TUGMASI)
+# 🟢 FOYDALANUVCHI QISMI
 @bot.message_handler(commands=['start'])
 def start_command(message):
     user_id = message.chat.id
@@ -330,7 +316,6 @@ def start_command(message):
         bot.send_message(user_id, "❌ Siz tizimdan bloklangansiz!")
         return
 
-    # Dinamik Mini App URL manzili (Keshni oldini olish uchun timestamp bilan)
     timestamp = int(datetime.now().timestamp())
     dynamic_web_app_url = f"{CONFIG['web_app_url']}?user_id={user_id}&t={timestamp}"
 
@@ -352,7 +337,7 @@ def start_command(message):
         bot.send_message(user_id, welcome_text, parse_mode="Markdown", reply_markup=kb)
 
 
-# 👑 DAXSHATLI IMPERATOR PANEL (ADMIN PANEL)
+# 👑 IMPERATOR PANEL (ADMIN PANEL)
 @bot.message_handler(commands=['admin'])
 def super_admin_panel(message):
     if message.chat.id != ADMIN_ID: return
@@ -416,7 +401,7 @@ def admin_sub_navigation(call):
         auto_backup_database()
         bot.send_message(ADMIN_ID, "✅ Ma'lumotlar bazasi zaxiralandi.")
 
-# 👤 CRM INTERFEJSI - MIJOZNING TO'LIQ DETALLARI
+# 👤 CRM INTERFEJSI
 def process_crm_user_inspect(message):
     try:
         input_data = message.text.strip()
@@ -434,7 +419,7 @@ def process_crm_user_inspect(message):
         
         history_text = ""
         if orders:
-            for index, order in enumerate(orders[:15], 1):  # Oxirgi 15 ta xarid
+            for index, order in enumerate(orders[:15], 1):
                 history_text += f"{index}. 📦 {order[1]} | `{order[2]:,}` so'm | {order[3]} | {order[5]}\n"
         else:
             history_text = "🤷‍♂️ Xaridlar tarixi mavjud emas."
@@ -473,8 +458,7 @@ def handle_quick_crm_actions(call):
     
     if action == "inspect":
         uid = int(parts[2])
-        # Sun'iy xabar yaratib yuboramiz qidiruv oson bo'lishi uchun
-        msg = telebot.types.Message(message_id=call.message.message_id, from_user=call.from_user, date=call.message.date, chat=call.message.chat, content_type='text', options=[], json_string="")
+        msg = call.message
         msg.text = str(uid)
         process_crm_user_inspect(msg)
     elif action == "done":
@@ -499,7 +483,7 @@ def handle_crm_deep_actions(call):
         try: bot.send_message(uid, "🟢 Sizning profilingiz blokdan ochildi. Do'kondan foydalanishingiz mumkin!")
         except Exception: pass
     elif action == "bal":
-        msg = bot.send_message(ADMIN_ID, f"💰 ID: `{uid}` uchun o'zgaruvchi summani yozing (Masalan: `25000` yoki `-15000`):")
+        msg = bot.send_message(ADMIN_ID, f"💰 ID: `{uid}` uchun o'zgaruvchi summani yozing (Masalan: `25000`):")
         bot.register_next_step_handler(msg, lambda m: process_direct_balance(m, uid))
 
 def process_direct_balance(message, uid):
@@ -512,7 +496,7 @@ def process_direct_balance(message, uid):
     except Exception as e:
         bot.send_message(ADMIN_ID, f"❌ Xato kiritish: {e}")
 
-# 💰 MOLIYA BOSHQARUVI (BALANS)
+# 💰 MOLIYA BOSHQARUVI
 def process_admin_balance_change(message):
     try:
         parts = message.text.split("|")
@@ -525,7 +509,7 @@ def process_admin_balance_change(message):
     except Exception as e:
         bot.send_message(ADMIN_ID, f"❌ Xato format format: {e}")
 
-# 📦 OMBORXONA BOSHQARUVI (INVENTORY ACTIONS)
+# 📦 OMBORXONA BOSHQARUVI
 @bot.callback_query_handler(func=lambda call: call.data.startswith("inv_"))
 def inventory_actions_handler(call):
     if call.message.chat.id != ADMIN_ID: return
@@ -544,7 +528,7 @@ def inventory_actions_handler(call):
         bot.register_next_step_handler(msg, process_inventory_add_item)
         
     elif action == "inv_del":
-        msg = bot.send_message(ADMIN_ID, "🗑️ O'chirish demoqchi bo'lgan tovarning **ID** kodini yozing (Masalan: `stars_1`):")
+        msg = bot.send_message(ADMIN_ID, "🗑️ O'chirish demoqchi bo'lgan tovarning **ID** kodini yozing:")
         bot.register_next_step_handler(msg, process_inventory_del_item)
 
 def process_inventory_add_item(message):
@@ -561,7 +545,7 @@ def process_inventory_add_item(message):
         conn.commit()
         conn.close()
         
-        bot.send_message(ADMIN_ID, f"✅ Mahsulot omborga muvaffaqiyatli qo'shildi va Mini App'da yangilandi!")
+        bot.send_message(ADMIN_ID, f"✅ Mahsulot omborga muvaffaqiyatli qo'shildi!")
     except Exception as e:
         bot.send_message(ADMIN_ID, f"❌ Xato! Formatni noto'g'ri kiritgansiz: {e}")
 
@@ -577,7 +561,7 @@ def process_inventory_del_item(message):
     except Exception as e:
         bot.send_message(ADMIN_ID, f"❌ O'chirishda xatolik: {e}")
 
-# 📢 REKLAMA NUSXALOVCHI (SMART BROADCAST)
+# 📢 SMART REKLAMA
 def process_admin_broadcast(message):
     conn = sqlite3.connect("store_management.db")
     cursor = conn.cursor()
@@ -599,15 +583,12 @@ def process_admin_broadcast(message):
     bot.send_message(ADMIN_ID, f"✅ Reklama muvaffaqiyatli {count} ta faol mijozga yetkazildi!")
 
 
-# Boshlang'ich Ma'lumotlar bazasini ishga tushirish
 init_db()
 
-# Flask va Botni birga ishga tushirish (Render talabi bo'yicha port)
 if __name__ == '__main__':
     import threading
     port = int(os.environ.get("PORT", 5000))
-    # Flaskni alohida thread ichida ishga tushiramiz
     threading.Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)).start()
-    # Bot pollingni ishga tushiramiz
     logging.info("Imperator markazi mukammal ishlamoqda...")
     bot.infinity_polling(skip_pending=True)
+
