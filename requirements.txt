@@ -1,4 +1,5 @@
-pyTelegramBotAPI
-Flask
-Flask-CORS
-requests
+pyTelegramBotAPI==4.26.0
+Flask==3.0.3
+Flask-CORS==5.0.0
+requests==2.32.3
+beautifulsoup4==4.12.3
