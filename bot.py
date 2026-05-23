@@ -19,7 +19,8 @@ logging.basicConfig(
 BOT_TOKEN = "8471799836:AAHmSZYDxF84XY_Klx3Y4gUU4Kkzs2oZdxE"
 ADMIN_ID = 7977733681  # Sardorbek - Imperator ID raqami
 
-bot = telebot.TeleBot(BOT_TOKEN)
+# Webhook ishlashi uchun threaded=False bo'lishi shart!
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 
 # 🌐 GLOBAL TARMOQ SOZLAMALARI
 CONFIG = {
@@ -150,8 +151,8 @@ def db_execute_purchase(user_id, product_id, product_name, price_sum, target):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    balance = cursor.fetchone()[0]
-    if balance < price_sum:
+    res = cursor.fetchone()
+    if not res or res[0] < price_sum:
         conn.close()
         return False, "Balans yetarli emas"
 
@@ -208,10 +209,29 @@ def auto_backup_database():
         logging.error(f"Backup xatolik: {e}")
 
 
-# 🌐 FLASK WEB SERVER VA CORS INTEGRATSIYASI (YANGILANDI)
+# 🌐 FLASK WEB SERVER VA CORS INTEGRATSIYASI (404 VA 409 NING TO'LIQ YECHIMI)
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+CORS(app, resources={r"/*": {"origins": "*"}})
 
+# Telegram Webhook so'rovlarini qabul qiluvchi maxsus manzil
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def getMessage():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return "!", 200
+    return "Xato manzil", 403
+
+# Render asosiiy manzili - Webhook shu yerda avtomat ulanadi
+@app.route('/')
+def home():
+    render_url = f"https://bot-py-15ln.onrender.com/{BOT_TOKEN}"
+    bot.remove_webhook()
+    bot.set_webhook(url=render_url)
+    return "Imperator markazi (Webhook) muvaffaqiyatli ishlamoqda!", 200
+
+# Mini App API manzillari
 @app.route('/api/user-data', methods=['POST', 'OPTIONS'])
 def get_mini_app_user_data():
     if request.method == 'OPTIONS':
@@ -247,7 +267,6 @@ def get_mini_app_user_data():
     except Exception as e:
         return jsonify({"success": False, "message": f"Server xatoligi: {str(e)}"}), 500
 
-# Mini App ba'zan so'raydigan qo'shimcha tasdiqlash manzili
 @app.route('/api/verify-user', methods=['POST', 'OPTIONS'])
 def verify_mini_app_user():
     if request.method == 'OPTIONS':
@@ -598,10 +617,8 @@ def process_admin_broadcast(message):
 
 init_db()
 
+# 🚀 RENDER TIZIMI UCHUN TO'G'RI CHIQISH (THREADING VA POLLINGSISZ)
 if __name__ == '__main__':
-    import threading
     port = int(os.environ.get("PORT", 5000))
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)).start()
-    logging.info("Imperator markazi mukammal ishlamoqda...")
-    bot.infinity_polling(skip_pending=True)
+    app.run(host='0.0.0.0', port=port)
 
